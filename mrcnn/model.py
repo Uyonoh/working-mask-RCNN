@@ -2172,7 +2172,7 @@ class MaskRCNN(object):
                 lr=learning_rate, momentum=momentum,
                 clipnorm=self.config.GRADIENT_CLIP_NORM)
         else:
-            optimizer = tf.keras.legacy.optimizers.SGD(
+            optimizer = tf.keras.optimizers.legacy.SGD(
                 lr=learning_rate, momentum=momentum,
                 clipnorm=self.config.GRADIENT_CLIP_NORM)
 
