@@ -1,0 +1,2 @@
+-- visualize.py --> add apply_masks for multiple masks
+-- model.py 2170 MaskRCNN.compile --> use 'tf.keras.optimizers.legacy.SDG' for tf >= 2.5

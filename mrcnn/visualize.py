@@ -79,6 +79,16 @@ def apply_mask(image, mask, color, alpha=0.5):
                                   image[:, :, c])
     return image
 
+def apply_masks(image, masks, color, alpha=0.5):
+    """Apply the given masks to the image.
+    """
+    for c in range(3):
+        image[:, :, c] = np.where(masks[:, :, c] == 1,
+                                  image[:, :, c] *
+                                  (1 - alpha) + alpha * color[c] * 255,
+                                  image[:, :, c])
+    return image
+
 
 def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
@@ -97,6 +107,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     colors: (optional) An array or colors to use with each object
     captions: (optional) A list of strings to use as captions for each object
     """
+	# If using minimask
+    if masks.shape[:2] != image.shape[:2]:
+        masks = utils.expand_mask(boxes, masks, image.shape)
     # Number of instances
     N = boxes.shape[0]
     if not N:
@@ -146,7 +159,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         ax.text(x1, y1 + 8, caption,
                 color='w', size=11, backgroundcolor="none")
 
-        # Mask
+        # Mask      	
         mask = masks[:, :, i]
         if show_mask:
             masked_image = apply_mask(masked_image, mask, color)
