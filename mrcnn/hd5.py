@@ -23,14 +23,19 @@ import os
 import numpy as np
 
 from keras import backend
-from keras.optimizers import optimizer_v1
-from keras.optimizers.optimizer_experimental import optimizer as optimizer_experimental
 from keras.saving import model_config as model_config_lib
 from keras.saving import saving_utils
 from keras.saving.saved_model import json_utils
 from keras.utils.generic_utils import LazyLoader
 from keras.utils.io_utils import ask_to_proceed_with_overwrite
 from tensorflow.python.platform import tf_logging as logging
+
+try:
+    from keras.optimizers import optimizer_v1
+    from keras.optimizers.optimizer_experimental import optimizer as optimizer_experimental
+except ImportError:
+	from keras import optimizer_v1
+	from keras.optimizers import Optimizer as optimizer_experimental
 
 
 # pylint: disable=g-import-not-at-top
