@@ -22,6 +22,7 @@ import tensorflow.keras.layers as KE
 import tensorflow.keras.utils as KU
 from tensorflow.python.eager import context
 import tensorflow.keras.models as KM
+# from keras.engine.training_v1 import load_weights
 
 from mrcnn import utils
 
@@ -79,7 +80,7 @@ def compute_backbone_shapes(config, image_shape):
         return config.COMPUTE_BACKBONE_SHAPE(image_shape)
 
     # Currently supports ResNet only
-    assert config.BACKBONE in ["resnet50", "resnet101"]
+    assert config.BACKBONE in ["resnet50", "resnet101", "resnet152"]
     return np.array(
         [[int(math.ceil(image_shape[0] / stride)),
             int(math.ceil(image_shape[1] / stride))]
@@ -171,11 +172,11 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
 
 def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
     """Build a ResNet graph.
-        architecture: Can be resnet50 or resnet101
+        architecture: Can be resnet50,  resnet101 or resnet 152
         stage5: Boolean. If False, stage5 of the network is not created
         train_bn: Boolean. Train or freeze Batch Norm layers
     """
-    assert architecture in ["resnet50", "resnet101"]
+    assert architecture in ["resnet50", "resnet101", "resnet152"]
     # Stage 1
     x = KL.ZeroPadding2D((3, 3))(input_image)
     x = KL.Conv2D(64, (7, 7), strides=(2, 2), name='conv1', use_bias=True)(x)
@@ -187,15 +188,29 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
     C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
     # Stage 3
+    # x = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
+    # x = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
+    # x = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
+    # C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn)
+    
     x = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
-    x = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
-    x = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
-    C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn)
+    block_count = {"resnet50": 3, "resnet101": 3, "resnet152": 7}[architecture]
+    for i in range(block_count):
+        x = identity_block(x, 3, [128, 128, 512], stage=3, block=chr(98 + i), train_bn=train_bn)
+    C3 = x
+    
     # Stage 4
     x = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn)
-    block_count = {"resnet50": 5, "resnet101": 22}[architecture]
+    block_count = {"resnet50": 5, "resnet101": 22, "resnet152": 35}[architecture]
+    n = 0
     for i in range(block_count):
-        x = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn)
+        if i >= 25:
+            i = 0
+            n += 1
+        if not n:
+            x = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn)
+        else:
+            x = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(97 + i) + chr(97 + n - 1), train_bn=train_bn)
     C4 = x
     # Stage 5
     if stage5:
@@ -2118,7 +2133,8 @@ class MaskRCNN(object):
         exclude: list of layer names to exclude
         """
         import h5py
-        from tensorflow.python.keras.saving import hdf5_format
+        # from tensorflow.python.keras.saving import hdf5_format
+        from mrcnn import hd5 as hdf5_format
 
         if exclude:
             by_name = True
@@ -2140,12 +2156,133 @@ class MaskRCNN(object):
                 layers = filter(lambda l: l.name not in exclude, layers)
 
             if by_name:
-                hdf5_format.load_weights_from_hdf5_group_by_name(f, layers)
+                hdf5_format.load_weights_from_hdf5_group_by_name(f, keras_model, layers)
             else:
                 hdf5_format.load_weights_from_hdf5_group(f, layers)
 
+        # Perform any layer defined finalization of the layer state.
+        for layer in keras_model.layers:
+            layer.finalize_state()
+
         # Update the log directory
         self.set_log_dir(filepath)
+        
+
+    def load_weights_(self,
+                   filepath,
+                   by_name=False,
+                   skip_mismatch=False,
+                   options=None):
+        """Loads all layer weights, either from a TensorFlow or an HDF5 weight file.
+
+        If `by_name` is False weights are loaded based on the network's
+        topology. This means the architecture should be the same as when the weights
+        were saved.  Note that layers that don't have weights are not taken into
+        account in the topological ordering, so adding or removing layers is fine as
+        long as they don't have weights.
+
+        If `by_name` is True, weights are loaded into layers only if they share the
+        same name. This is useful for fine-tuning or transfer-learning models where
+        some of the layers have changed.
+
+        Only topological loading (`by_name=False`) is supported when loading weights
+        from the TensorFlow format. Note that topological loading differs slightly
+        between TensorFlow and HDF5 formats for user-defined classes inheriting from
+        `tf.keras.Model`: HDF5 loads based on a flattened list of weights, while the
+        TensorFlow format loads based on the object-local names of attributes to
+        which layers are assigned in the `Model`'s constructor.
+
+        Args:
+            filepath: String, path to the weights file to load. For weight files in
+                TensorFlow format, this is the file prefix (the same as was passed
+                to `save_weights`). This can also be a path to a SavedModel
+                saved from `model.save`.
+            by_name: Boolean, whether to load weights by name or by topological
+                order. Only topological loading is supported for weight files in
+                TensorFlow format.
+            skip_mismatch: Boolean, whether to skip loading of layers where there is
+                a mismatch in the number of weights, or a mismatch in the shape of
+                the weight (only valid when `by_name=True`).
+            options: Optional `tf.train.CheckpointOptions` object that specifies
+                options for loading weights.
+
+        Returns:
+            When loading a weight file in TensorFlow format, returns the same status
+            object as `tf.train.Checkpoint.restore`. When graph building, restore
+            ops are run automatically as soon as the network is built (on first call
+            for user-defined classes inheriting from `Model`, immediately if it is
+            already built).
+
+            When loading weights in HDF5 format, returns `None`.
+
+        Raises:
+            ImportError: If `h5py` is not available and the weight file is in HDF5
+                format.
+            ValueError: If `skip_mismatch` is set to `True` when `by_name` is
+            `False`.
+        """
+        from keras import backend
+        from keras.saving import saving_utils
+        import h5py
+        from tensorflow.python.keras.saving import hdf5_format
+        # from mcrnn.hd5 import load_weights_from_hdf5_group_by_name
+        # from mrcnn import hd5 as hdf5_format
+
+        if backend.is_tpu_strategy(self._distribution_strategy):
+            if (self._distribution_strategy.extended.steps_per_run > 1 and
+                (not saving_utils.is_hdf5_filepath(filepath))):
+                spr = self._distribution_strategy.extended.steps_per_run
+                raise ValueError('Load weights is not implemented with TPUStrategy '
+                                'with `steps_per_run` greater than 1. The '
+                                f'`steps_per_run` is {spr}')
+        if skip_mismatch and not by_name:
+            raise ValueError(
+                'When calling model.load_weights, skip_mismatch can only be set to '
+                'True when by_name is True.')
+
+        # filepath, save_format = _detect_save_format(filepath)
+        filepath, save_format = filepath, "h5"
+        if save_format == 'tf':
+            status = self._checkpoint.read(filepath, options)
+            if by_name:
+                raise NotImplementedError(
+                    'Weights may only be loaded based on topology into Models when '
+                    'loading TensorFlow-formatted weights (got by_name=True to '
+                    'load_weights).')
+            if not tf.executing_eagerly():
+                session = backend.get_session()
+                # Restore existing variables (if any) immediately, and set up a
+                # streaming restore for any variables created in the future.
+                tf.__internal__.tracking.streaming_restore(status=status,
+                                                        session=session)
+            status.assert_nontrivial_match()
+        else:
+            status = None
+            if h5py is None:
+                raise ImportError(
+                    '`load_weights` requires h5py package when loading weights from '
+                    'HDF5. Try installing h5py.')
+            if not self._is_graph_network and not self.built:
+                raise ValueError(
+                    'Unable to load weights saved in HDF5 format into a subclassed '
+                    'Model which has not created its variables yet. Call the Model '
+                    'first, then load the weights.')
+            self._assert_weights_created()
+            with h5py.File(filepath, 'r') as f:
+                if 'layer_names' not in f.attrs and 'model_weights' in f:
+                    f = f['model_weights']
+                if by_name:
+                    hdf5_format.load_weights_from_hdf5_group_by_name(
+                        f, self, skip_mismatch)
+                else:
+                    hdf5_format.load_weights_from_hdf5_group(f, self)
+
+        # Perform any layer defined finalization of the layer state.
+        for layer in self.layers:
+            layer.finalize_state()
+        return status
+    
+
 
     def get_imagenet_weights(self):
         """Downloads ImageNet trained weights from Keras.

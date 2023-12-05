@@ -20,6 +20,11 @@ from matplotlib import patches,  lines
 from matplotlib.patches import Polygon
 import IPython.display
 
+from shapely import geometry
+from mrcnn import orth
+import skimage
+
+
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../")
 
@@ -107,7 +112,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     colors: (optional) An array or colors to use with each object
     captions: (optional) A list of strings to use as captions for each object
     """
-	# If using minimask
+    # If using minimask
     if masks.shape[:2] != image.shape[:2]:
         masks = utils.expand_mask(boxes, masks, image.shape)
     # Number of instances
@@ -159,7 +164,142 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         ax.text(x1, y1 + 8, caption,
                 color='w', size=11, backgroundcolor="none")
 
-        # Mask      	
+        # Mask          
+        mask = masks[:, :, i]
+        if show_mask:
+            masked_image = apply_mask(masked_image, mask, color)
+
+        # Mask Polygon
+        # Pad to ensure proper polygons for masks that touch image edges.
+        padded_mask = np.zeros(
+            (mask.shape[0] + 2, mask.shape[1] + 2), dtype=np.uint8)
+        padded_mask[1:-1, 1:-1] = mask
+        contours = find_contours(padded_mask, 0.5)
+        for verts in contours:
+            # Subtract the padding and flip (y, x) to (x, y)
+            verts = np.fliplr(verts) - 1
+            p = Polygon(verts, facecolor="none", edgecolor=color)
+            ax.add_patch(p)
+    ax.imshow(masked_image.astype(np.uint8))
+    if auto_show:
+        plt.show()
+        
+        
+def orth_masks(masks):
+    i = 0
+    masks_ = np.zeros((56, 56, masks.shape[2]))
+    while i < masks.shape[2]:
+        contours = find_contours(masks[:, :, i])
+        n = 0
+        while n < len(contours[0]):
+            contours[0][n] = tuple(contours[0][n])
+            n += 1
+        poly = geometry.Polygon(contours[0])
+        p = orth.orthogonalize_polygon(poly)
+
+        coords = str(p)[10:-2]
+        coords = coords.split(", ")
+        xs = []
+        ys = []
+
+        for coord in coords:
+            x, y = coord.split(" ")
+            xs.append(round(float(x)))
+            ys.append(round(float(y)))
+
+        xs = np.array(xs)
+        ys = np.array(ys)
+        xs -= min(xs)
+        ys -= min(ys)
+        max(xs)
+
+        mk = np.zeros((int(max(ys)) + 1, int(max(xs)) + 1))
+        rr, cc = skimage.draw.polygon(ys, xs)
+        mk[rr, cc] = 1
+        mk = mk.T
+        mk = utils.resize(mk.T, (56, 56))
+    #     mk = utils.resize(mk.T, (masks_.shape[0], masks_.shape[1]))
+
+        masks_[:, :, i] = mk
+    #     plt.imshow(mk
+
+        i += 1
+    return masks_
+        
+        
+def display_orth_instances(image, boxes, masks, class_ids, class_names,
+                      scores=None, title="",
+                      figsize=(16, 16), ax=None,
+                      show_mask=True, show_bbox=True,
+                      colors=None, captions=None):
+    """
+    boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
+    masks: [height, width, num_instances]
+    class_ids: [num_instances]
+    class_names: list of class names of the dataset
+    scores: (optional) confidence scores for each box
+    title: (optional) Figure title
+    show_mask, show_bbox: To show masks and bounding boxes or not
+    figsize: (optional) the size of the image
+    colors: (optional) An array or colors to use with each object
+    captions: (optional) A list of strings to use as captions for each object
+    """
+    
+    masks = orth_masks(masks)
+    # If using minimask
+    if masks.shape[:2] != image.shape[:2]:
+        print("expanding ...")
+        masks = utils.expand_mask(boxes, masks, image.shape)
+    # Number of instances
+    N = boxes.shape[0]
+    if not N:
+        print("\n*** No instances to display *** \n")
+    else:
+        assert boxes.shape[0] == masks.shape[-1] == class_ids.shape[0]
+
+    # If no axis is passed, create one and automatically call show()
+    auto_show = False
+    if not ax:
+        _, ax = plt.subplots(1, figsize=figsize)
+        auto_show = True
+
+    # Generate random colors
+    colors = colors or random_colors(N)
+
+    # Show area outside image boundaries.
+    height, width = image.shape[:2]
+    ax.set_ylim(height + 10, -10)
+    ax.set_xlim(-10, width + 10)
+    ax.axis('off')
+    ax.set_title(title)
+
+    masked_image = image.astype(np.uint32).copy()
+    for i in range(N):
+        color = colors[i]
+
+        # Bounding box
+        if not np.any(boxes[i]):
+            # Skip this instance. Has no bbox. Likely lost in image cropping.
+            continue
+        y1, x1, y2, x2 = boxes[i]
+        if show_bbox:
+            p = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=2,
+                                alpha=0.7, linestyle="dashed",
+                                edgecolor=color, facecolor='none')
+            ax.add_patch(p)
+
+        # Label
+        if not captions:
+            class_id = class_ids[i]
+            score = scores[i] if scores is not None else None
+            label = class_names[class_id]
+            caption = "{} {:.3f}".format(label, score) if score else label
+        else:
+            caption = captions[i]
+        ax.text(x1, y1 + 8, caption,
+                color='w', size=11, backgroundcolor="none")
+
+        # Mask          
         mask = masks[:, :, i]
         if show_mask:
             masked_image = apply_mask(masked_image, mask, color)
