@@ -2306,7 +2306,7 @@ class MaskRCNN(object):
         # Keras < 3.x uses legacy
         if keras.version() >= '3.0':
             optimizer = tf.keras.optimizers.SGD(
-                lr=learning_rate, momentum=momentum,
+                learning_rate=learning_rate, momentum=momentum,
                 clipnorm=self.config.GRADIENT_CLIP_NORM)
         else:
             optimizer = tf.keras.optimizers.legacy.SGD(
