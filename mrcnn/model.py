@@ -2324,8 +2324,6 @@ class MaskRCNN(object):
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:
                 continue
-            print(tf.__version__)
-            print(tf.keras.version())
             loss = (
                 ReduceMean()(layer.output)
                 * self.config.LOSS_WEIGHTS.get(name, 1.))
