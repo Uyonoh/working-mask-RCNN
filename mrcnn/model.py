@@ -2314,6 +2314,9 @@ class MaskRCNN(object):
                 clipnorm=self.config.GRADIENT_CLIP_NORM)
 
         # Add Losses
+        class ReduceMean(KL.Layer):
+            def call(self, x):
+                return tf.reduce_mean(input_tensor=x, keepdims=True)
         loss_names = [
             "rpn_class_loss",  "rpn_bbox_loss",
             "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
@@ -2322,7 +2325,7 @@ class MaskRCNN(object):
             if layer.output in self.keras_model.losses:
                 continue
             loss = (
-                tf.reduce_mean(input_tensor=layer.output, keepdims=True)
+                ReduceMean()(layer.output)
                 * self.config.LOSS_WEIGHTS.get(name, 1.))
             self.keras_model.add_loss(loss)
 
@@ -2340,10 +2343,6 @@ class MaskRCNN(object):
             loss=[None] * len(self.keras_model.outputs))
 
         # Add metrics for losses
-        class ReduceMean(KL.Layer):
-            def call(self, x):
-            return tf.reduce_mean(input_tensor=x, keepdims=True)
-
         for name in loss_names:
             if name in self.keras_model.metrics_names:
                 continue
