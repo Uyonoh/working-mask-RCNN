@@ -2303,8 +2303,8 @@ class MaskRCNN(object):
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        # Tensorflow < 2.5 uses legacy
-        if tf.version.VERSION >= '2.5':
+        # Keras < 3.x uses legacy
+        if keras.version() >= '3.0':
             optimizer = tf.keras.optimizers.SGD(
                 lr=learning_rate, momentum=momentum,
                 clipnorm=self.config.GRADIENT_CLIP_NORM)
